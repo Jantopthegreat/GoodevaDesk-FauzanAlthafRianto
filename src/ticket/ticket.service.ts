@@ -3,14 +3,37 @@ import { PrismaService } from '../prisma/prisma.service';
 import { TicketStatus } from '../generated/prisma/client';
 import { CreateTicketDto } from '../dto/create-ticket.dto';
 import { ListTicketQueryDto } from '../dto/list-ticket.query.dto';
+import { LlmService } from '../llm/llm.service';
+import { CacheService } from '../cache/cache.service';
 
 @Injectable()
 export class TicketService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly llm: LlmService,
+    private readonly cache: CacheService,
+  ) {}
 
-  create(organizationId: string, dto: CreateTicketDto) {
+  async create(organizationId: string, dto: CreateTicketDto) {
+
+    let result = await this.cache.getClassification(dto.subject, dto.message, organizationId);
+
+    if (!result) {
+      result = await this.llm.classify(dto.subject, dto.message);
+      if (result) {
+        await this.cache.setClassification(dto.subject, dto.message, organizationId, result);
+      }
+    }
+
+    // 3. Simpan ticket. Kalau LLM/cache gagal total, result tetap null 
+
     return this.prisma.ticket.create({
-      data: { organizationId, ...dto },
+      data: {
+        organizationId,
+        ...dto,
+        category: result?.category ?? null,
+        suggestedReply: result?.suggestedReply ?? null,
+      },
     });
   }
 
